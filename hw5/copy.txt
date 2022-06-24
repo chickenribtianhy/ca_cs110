@@ -1,0 +1,28 @@
+for (y = 0; y < image_height; ++y)
+    {
+        unsigned short xi[3] = {0, 0};
+        xi[2] = y * y * y;
+        for (x = 0; x < image_width; ++x)
+        {
+            i = (image_height - y - 1) * image_width + x;
+            for (sy = 0; sy < 2; ++sy)
+            {
+                for (sx = 0; sx < 2; ++sx)
+                {
+                    vec3 accumulated_color = vec3_init(0, 0, 0);
+                    for (s = 0; s < samples_per_pixel; s++)
+                    {
+                        /* Randomly generate a ray from camera */
+                        ray camera_ray = generate_ray(&camera, xi, image_width, image_height,
+                                                      x, y, &cx, &cy, sx, sy);
+                        /* Trace the ray and compute the color */
+                        vec3 camera_ray_color = radiance(camera_ray, 0, xi);
+                        /* Add the color to `accumulated_color` for this subpixel */
+                        accumulated_color = vec3_add(accumulated_color, vec3_mulf(camera_ray_color, (1. / samples_per_pixel)));
+                    }
+                    /* Add `accumulated_color` for this subpixel to the color for the image pixel, which can be imagined as 1 = 0.25 * 4 */
+                    image[i] = vec3_add(image[i], vec3_mulf(vec3_init(clamp(accumulated_color.x), clamp(accumulated_color.y), clamp(accumulated_color.z)), .25));
+                }
+            }
+        }
+    }

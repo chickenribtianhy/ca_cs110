@@ -1,0 +1,33 @@
+to inform the assembler that we want to put the following content into this segment
+.data indicates that the following content would be stored in static segment, denotes where global variables are declared
+.text indicates that the following content would be stored in code segment, indicates the start of the code.
+.word store listed value as unaligned 32-bit words, allocates and initializes space for a 4-byte variable in the data segment.
+
+34, representing the 9-th fib
+
+0x10000010
+refer to t3(x28), or in memory(data) as well
+
+break 0x10, change 9 to d
+
+
+
+
+t0(x5)
+
+t1 is source, t2 is dest
+
+loop:
+	slli t3, t0, 2
+	add t4, t1, t3
+	lw t5, 0(t4)
+	beq t5, x0, exit
+	add t6, t2, t3
+	sw t5, 0(t6)
+	addi t0, t0, 1
+	jal x0, loop
+
+The slli instruction computes an offset from the start of the address of an array, stored in t0. 
+This offset represents k, after times 4, then added to t1 and t2, we have the address from which we want to load word.
+
+
