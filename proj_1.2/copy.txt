@@ -1,0 +1,1112 @@
+#   Project 1.2 RVC instructions to RISC-V instructions in RISC-V
+
+#   You can suppose you will get the number of machine codes you should translate from 
+#   "lines_of_rvc_codes" and get the 16 or 32 bits-machine codes from "rvc_codes". 
+#   Both of them are stored in file "input.S"
+
+#   When we test your project, we will change the input files content.
+
+# DO NOT REMOVE THIS LINE WHEN SUBMITTING
+.import input.S
+
+# Your code to convert the RVC codes to RVI codes.
+
+.text
+
+.globl main
+main:
+    # a2 is the number of codes
+    la a2 lines_of_rvc_codes
+    lw a2 0(a2)
+    # a3 is the address of first instruction
+    la a3 rvc_codes
+
+    # initial an array on stack to see whether each instr is c_instr
+    jal ra initialize
+    jal ra traverse
+
+    li t0 0
+    mv t1 a3
+    main_loop:
+        beq t0 a2 exit_main_loop
+        sub t5 a4 t0 # t5 holds the address of comp[i]
+        lb a5 0(t5)
+        beq a5 x0 instr_32
+            # comp[i]=1, 16bit instr
+            lh a5 0(t1) # ==============================
+            jal ra classify
+            # print the instr, a6
+            mv a6 a0
+            jal ra print_binary
+            # jal ra print_newline
+            addi t0 t0 1
+            addi t1 t1 2
+            jal x0 main_loop
+        instr_32:
+        lw a6 0(t1) # a6 to be printed
+        jal ra offset_check_32
+        jal ra print_binary
+        # jal ra print_newline
+        addi t0 t0 1
+        addi t1 t1 4
+        jal x0 main_loop
+    exit_main_loop:
+
+    jal ra print_newline
+    jal ra print_newline
+    # Exit with error code 0
+    add	   a1, x0, x0
+    addi   a0, x0, 17
+    ecall
+
+# comp[i] address t5
+# i t0
+# instruction a6, address t1
+# return in a6
+offset_check_32: # change the offset of jtype and sbtype
+    addi sp sp -4
+    sw ra 0(sp)     # save the return adress, since it would be changed in following function calls
+    # first, distinguish sbtype and jtypes from other instructions
+    li s2 0b1111111
+    and s2 s2 a6
+    li t6 0b1100011 # the opcode of sbtype
+    beq s2 t6 sbtype_offset_change
+        li t6 0b1101111 # the opcode of jtype
+        beq s2 t6 jtype_offset_change
+            # \else is neither, return
+            jal x0 exit_offset_check_32
+        jtype_offset_change:
+        # change the offset of jtype32
+        # =================================================
+        # second, calculate the offset
+        li s5 0 # offset
+        li s2 1
+        slli s2 s2 31 # get imm[20]
+        and s2 s2 a6
+        srli s2 s2 31
+        add s5 s5 s2
+        slli s5 s5 8 # shift for imm[19:12]
+        li s2 0b11111111
+        slli s2 s2 12 # get imm[19:12]
+        and s2 s2 a6
+        srli s2 s2 12
+        add s5 s5 s2
+        slli s5 s5 1 # shift for imm[11]
+        li s2 0b1
+        slli s2 s2 20 # get imm[10:5]
+        and s2 s2 a6
+        srli s2 s2 20
+        add s5 s5 s2
+        slli s5 s5 4 # shift for imm[4:1]
+        li s2 0b1111
+        slli s2 s2 8 # get imm[4:1]
+        and s2 s2 a6
+        srli s2 s2 8
+        add s5 s5 s2 # now s5 is the offset
+        # third, change the offset, justified
+        li s2 1
+        slli s2 s2 31 # get imm[12]
+        and s2 s2 a6
+        srli s2 s2 31
+        beq s2 x0 sbtype_positive
+            # here is sbtype_negative
+            mv s7 t0 # s7 is the iterater
+            addi s7 s7 -1
+            li s6 0 # s6 is the new offset
+            sbtype_negative_loop:
+                li s2 1
+                slli s2 s2 11
+                and s2 s2 s5
+                srli s2 s2 11
+                beq s2 x0 exit_sbtype_loop
+                addi s5 s5 2
+                sub s8 a4 s7 # s8 holds the address of comp[i]
+                lb s8 0(s8)
+                sub s5 s5 s8 # -2+1=-1
+                addi s6 s6 -2
+                addi s7 s7 -1
+                jal x0 sbtype_negative_loop
+            # return
+        sbtype_positive:
+        mv s7 t0 # s7 is the iterater
+        li s6 0 # s6 is the new offset
+        sbtype_positive_loop:
+            beq s5 x0 exit_sbtype_loop
+            addi s5 s5 -2
+            sub s8 a4 s7 # s8 holds the address of comp[i]
+            lb s8 0(s8)
+            add s5 s5 s8 # -2+1=-1
+            addi s6 s6 2
+            addi s7 s7 1
+            jal x0 sbtype_positive_loop
+        exit_sbtype_loop:
+        # forth, put it back to the position
+        # the new offset is in s6
+        # li s9 0 # new imm[12:1]
+        li s2 0b11111
+        slli s2 s2 8
+        addi s2 s2 0b11111111
+        slli s2 s2 12
+        addi s2 s2 0b1111111 # s2 is the mask over non-imm of the instr
+        and a6 a6 s2 # the imm[12:1] are all 0
+        li s2 1
+        slli s2 s2 11 # get imm[12]
+        and s2 s2 s6
+        slli s2 s2 20 # sr11, sl31
+        add a6 a6 s2
+        li s2 1
+        slli s2 s2 10 # get imm[11]
+        and s2 s2 s6
+        srli s2 s2 3 # sr10, sl7
+        add a6 a6 s2
+        li s2 0b111111
+        slli s2 s2 4 # get imm[10:5]
+        and s2 s2 s6
+        slli s2 s2 21 # sr4, sl25
+        add a6 a6 s2
+        li s2 0b1111
+        # slli s2 s2 0 # get imm[4:1]
+        and s2 s2 s6
+        slli s2 s2 8 # sr0, sl8
+        add a6 a6 s2 # now a6 is the new instruction
+        # ===================================================
+        jal x0 exit_offset_check_32
+    sbtype_offset_change:
+    # change the offset of sbtype32
+    # second, calculate the offset
+    li s5 0 # offset
+    li s2 1
+    slli s2 s2 31 # get imm[12]
+    and s2 s2 a6
+    srli s2 s2 31
+    add s5 s5 s2
+    slli s5 s5 1 # shift for imm[11]
+    li s2 1
+    slli s2 s2 7 # get imm[11]
+    and s2 s2 a6
+    srli s2 s2 7
+    add s5 s5 s2
+    slli s5 s5 6 # shift for imm[10:5]
+    li s2 0b111111
+    slli s2 s2 25 # get imm[10:5]
+    and s2 s2 a6
+    srli s2 s2 25
+    add s5 s5 s2
+    slli s5 s5 4 # shift for imm[4:1]
+    li s2 0b1111
+    slli s2 s2 8 # get imm[4:1]
+    and s2 s2 a6
+    srli s2 s2 8
+    add s5 s5 s2 # now s5 is the offset
+    # third, change the offset, justified
+    li s2 1
+    slli s2 s2 31 # get imm[12]
+    and s2 s2 a6
+    srli s2 s2 31
+    beq s2 x0 sbtype_positive
+        # here is sbtype_negative
+        mv s7 t0 # s7 is the iterater
+        addi s7 s7 -1
+        li s6 0 # s6 is the new offset
+        sbtype_negative_loop:
+            li s2 1
+            slli s2 s2 11
+            and s2 s2 s5
+            srli s2 s2 11
+            beq s2 x0 exit_sbtype_loop
+            addi s5 s5 2
+            sub s8 a4 s7 # s8 holds the address of comp[i]
+            lb s8 0(s8)
+            sub s5 s5 s8 # -2+1=-1
+            addi s6 s6 -2
+            addi s7 s7 -1
+            jal x0 sbtype_negative_loop
+        # return
+    sbtype_positive:
+    mv s7 t0 # s7 is the iterater
+    li s6 0 # s6 is the new offset
+    sbtype_positive_loop:
+        beq s5 x0 exit_sbtype_loop
+        addi s5 s5 -2
+        sub s8 a4 s7 # s8 holds the address of comp[i]
+        lb s8 0(s8)
+        add s5 s5 s8 # -2+1=-1
+        addi s6 s6 2
+        addi s7 s7 1
+        jal x0 sbtype_positive_loop
+    exit_sbtype_loop:
+    # forth, put it back to the position
+    # the new offset is in s6
+    # li s9 0 # new imm[12:1]
+    li s2 0b11111
+    slli s2 s2 8
+    addi s2 s2 0b11111111
+    slli s2 s2 12
+    addi s2 s2 0b1111111 # s2 is the mask over non-imm of the instr
+    and a6 a6 s2 # the imm[12:1] are all 0
+    li s2 1
+    slli s2 s2 11 # get imm[12]
+    and s2 s2 s6
+    slli s2 s2 20 # sr11, sl31
+    add a6 a6 s2
+    li s2 1
+    slli s2 s2 10 # get imm[11]
+    and s2 s2 s6
+    srli s2 s2 3 # sr10, sl7
+    add a6 a6 s2
+    li s2 0b111111
+    slli s2 s2 4 # get imm[10:5]
+    and s2 s2 s6
+    slli s2 s2 21 # sr4, sl25
+    add a6 a6 s2
+    li s2 0b1111
+    # slli s2 s2 0 # get imm[4:1]
+    and s2 s2 s6
+    slli s2 s2 8 # sr0, sl8
+    add a6 a6 s2 # now a6 is the new instruction
+    # jal x0 exit_offset_check_32
+    exit_offset_check_32:
+    lw ra 0(sp)
+    addi sp sp 4
+    jr ra
+
+classify: # a5 as a parameter to be decompressed
+    addi sp sp -4
+    sw ra 0(sp)     # save the return adress, since it would be changed in following function calls
+    
+    # mask s2
+    andi s2 a5 3
+    # opcode
+    li t5 0
+    bne s2 t5 op_not_00
+        # here is opcode 00
+        li s2 0b1110
+        slli s2 s2 12
+        and s2 a5 s2   # take top 3 bits
+        srli s2 s2 12
+        li t5 0b0100 # top 3 bits 010 lw
+        beq s2 t5 goto_lw
+            # \else goto sw
+            # sw decompress(((((((((((((((
+            jal ra de_sw
+            jal x0 classify_exit
+        goto_lw:
+        # lw decompress(((((((((((((((
+        jal ra de_lw
+        jal x0 classify_exit
+
+    op_not_00:
+    li t5 1
+    bne s2 t5 op_not_01
+        # here is opcode 01
+        li s2 0b11111100
+        slli s2 s2 8
+        and s2 a5 s2   # take top 6 bits
+        srli s2 s2 8
+        li t5 0b10001100 # top 6 bits 100011 CA format
+        beq s2 t5 goto_CA
+            # here is CB CJ CI
+            li s2 0b111
+            slli s2 s2 13
+            and s2 a5 s2   # take top 6 bits
+            srli s2 s2 13
+            li t5 0b000 # top 3 bits 000
+            beq s2 t5 goto_addi
+                # rest
+                li t5 0b001 # top 3 bits 001
+                beq s2 t5 goto_jal
+                    # rest
+                    li t5 0b010
+                    beq s2 t5 goto_li
+                        li t5 0b011
+                        beq s2 t5 goto_lui
+                            li t5 0b100
+                            beq s2 t5 goto_Cbtype2
+                                li t5 0b101
+                                beq s2 t5 goto_j
+                                    li t5 0b110
+                                    beq s2 t5 goto_beqz
+                                        # here is bnez
+                                        # decompress bnez(((((((((
+                                        jal x0 classify_exit
+                                    goto_beqz:
+                                    # here is beqz
+                                    # decompress beqz(((((((((((
+                                    jal x0 classify_exit
+                                goto_j:
+                                # here is j
+                                # decompress j(((((((
+                                jal x0 classify_exit
+                            goto_Cbtype2:
+                            li s2 0b11
+                            slli s2 s2 10
+                            and s2 s2 a5
+                            srli s2 s2 10
+                            li t5 0
+                            beq s2 t5 goto_srli
+                                li t5 1
+                                beq s2 t5 goto_srai
+                                    # here is andi left
+                                    # decompress andi((((((((((
+                                    jal x0 classify_exit
+                                goto_srai:
+                                # here is srai
+                                # decompress srai((((((((((
+                                jal ra de_srai
+                                jal x0 classify_exit
+                            goto_srli:
+                            # here is srli
+                            # decompress srli((((((((((
+                            jal ra de_srli
+                            jal x0 classify_exit
+                        goto_lui:
+                        # here is lui
+                        # decompress lui((((((((
+                        jal ra de_lui
+                        jal x0 classify_exit
+                    goto_li:
+                    # here is li
+                    # decompress li((((((((
+                    jal x0 classify_exit
+                goto_jal:
+                # here is jal
+                # decompress jal(((((((((((((
+                jal x0 classify_exit
+            goto_addi:
+            # here is addi
+            # decompress addi((((((((((((
+            jal ra de_addi
+            jal x0 classify_exit
+        goto_CA:
+        # here is CA
+        li s2 0b11
+        slli s2 s2 5
+        and s2 a5 s2
+        srli s2 s2 5
+        li t5 0b11 # 11 for and
+        beq s2 t5 goto_and
+            li t5 0b10 # 10 for or
+            beq s2 t5 goto_or
+                # xor&sub
+                li t5 0b01 
+                beq s2 t5 goto_xor
+                    # then here si sub
+                    #decompress sub((((((((((
+                    jal ra de_sub
+                    jal x0 classify_exit
+                goto_xor:
+                # decompress xor(((((((((((((((
+                jal ra de_xor
+                jal x0 classify_exit
+            goto_or:
+            # decompress or(((((((((((((((
+            jal ra de_or
+            jal x0 classify_exit
+        goto_and:
+        # decompress and(((((((((((((
+        jal ra de_and
+        jal x0 classify_exit
+
+    op_not_01:
+    # then op is 10
+    # here is opcode 10
+    li s2 0b111 # top 3 bits
+    slli s2 s2 13
+    and s2 a5 s2
+    srli s2 s2 13
+    li t5 0
+    beq s2 t5 goto_slli
+    # then here is CR
+        li s2 0b11111
+        slli s2 s2 2
+        and s2 a5 s2   # take rs2 5 bits
+        srli s2 s2 2
+        li t5 0b10001100 # rs2 00000 goto jalr&jr
+        beq s2 t5 goto_jrtype
+            # here is add&mv
+            li s2 0b1
+            slli s2 s2 12
+            and s2 a5 s2   # take instr[3] bit
+            srli s2 s2 12
+            li t5 0b1 # 1001 goto add
+            beq s2 t5 goto_add
+                # here is mv
+                # decompress mv(((((((((((
+                jal ra de_mv
+                jal x0 classify_exit
+            goto_add:
+            # here is add
+            # decompress add((((((((((
+            jal ra de_add
+            jal x0 classify_exit
+        goto_jrtype:
+        # jalr&jr
+        li s2 0b1
+        slli s2 s2 12
+        and s2 a5 s2   # take instr[3] bit
+        srli s2 s2 12
+        li t5 0b1 # 1001 goto jalr
+        beq s2 t5 goto_jalr
+            # here is jr
+            # decompress jr(((((((((((
+            jal ra de_jr
+            jal x0 classify_exit
+        goto_jalr:
+        # here is jalr
+        # decompress jalr((((((((((
+        jal ra de_jalr
+        jal x0 classify_exit
+    goto_slli:
+    # here is slli
+    #decompress slli(((((((((
+    jal ra de_slli
+    jal x0 classify_exit
+
+    classify_exit: # return process
+    lw ra 0(sp)
+    addi sp sp 4
+    jr ra
+
+
+
+initialize:
+    # a2 is the number of iterations
+    li t0 0 # t0 is the iterater, i=1
+    addi a4 sp -1
+    initialize_loop:
+        beq t0 a2 exit_initialize_loop
+        addi sp sp -1 # each byte holds whether instr[i] is compressed
+        li t1 1
+        sb t1 0(sp)
+        addi t0 t0 1
+    jal x0, initialize_loop
+    exit_initialize_loop:
+    jr ra
+
+traverse:
+    # t1 keeps the address of instrustion under process
+    mv t1 a3
+    # a2 is the number of iterations
+    li t0 0 # t0 is the iterater, i=1
+    traverse_loop:
+        beq t0 a2 exit_traverse_loop
+        lb t4 0(t1) # t4 next half
+        # \if the last two bit of t4 is 11, then it is 32bit instr
+        andi t5 t4 3
+        li t6 3
+        bne t5 t6 instr_16
+            # process 32bit instr now
+            sub t6 a4 t0 # comp+i
+            sb x0 0(t6) # comp[i]=0 if this instr is 32bit
+            addi t1 t1 2
+        instr_16:
+        addi t1 t1 2
+        addi t0 t0 1
+    jal x0 traverse_loop
+    exit_traverse_loop:
+    jr ra
+
+
+
+print_newline:
+	li	a1 '\n'
+	li	a0 11
+	ecall
+	jr	ra
+
+print_binary:
+    addi sp sp -4
+    sw ra 0(sp)
+    li t5 1
+    slli t5 t5 31
+    jal ra print_newline
+    print_binary_loop:
+        beq t5 x0  exit_print_binary_loop
+        and a1 t5 a6
+        beq a1 x0 print_zero
+            # print 1
+            li a1 1
+        print_zero:
+        li a0 1
+        ecall
+        srli t5 t5 1
+        jal x0 print_binary_loop
+    exit_print_binary_loop:
+    lw ra 0(sp)
+    addi sp sp 4
+    jr ra 
+
+# parameter a5, return in a0
+de_add:
+    addi sp sp -4
+    sw ra 0(sp)
+    # funct
+    li a0 0
+    slli a0 a0 5 # shift for rs2
+    # rs2
+    li s4 0b11111
+    slli s4 s4 2
+    and s4 s4 a5
+    srli s4 s4 2 # shift back
+    add a0 a0 s4
+    slli a0 a0 5 # shift for rs1
+    # rs1
+    li s4 0b11111
+    slli s4 s4 7
+    and s4 s4 a5
+    srli s4 s4 7
+    add a0 a0 s4
+    slli a0 a0 3 # shift for funct
+    # 000
+    # funct
+    slli a0 a0 5 # shift for rd
+    # rd
+    add a0 a0 s4
+    slli a0 a0 7 # shift for opcode
+    # opcode
+    addi a0 a0 0b0110011
+    lw ra 0(sp)
+    addi sp sp 4
+    jr ra 
+    
+# parameter a5, return in a0
+de_mv:
+    addi sp sp -4
+    sw ra 0(sp)
+    # funct
+    li a0 0
+    slli a0 a0 5 # shift for rs2
+    # rs2
+    li s4 0b11111
+    slli s4 s4 2
+    and s4 s4 a5
+    srli s4 s4 2 # shift back
+    add a0 a0 s4
+    slli a0 a0 5 # shift for rs1
+    # rs1
+    li s4 0b11111
+    slli s4 s4 7
+    and s4 s4 a5
+    srli s4 s4 7
+    add a0 a0 s4
+    slli a0 a0 3 # shift for funct
+    # 000
+    # funct
+    slli a0 a0 5 # shift for rd
+    # rd
+    slli a0 a0 7 # shift for opcode
+    # opcode
+    addi a0 a0 0b0110011
+    lw ra 0(sp)
+    addi sp sp 4
+    jr ra 
+    
+
+# parameter a5, return in a0
+de_jalr:
+    addi sp sp -4
+    sw ra 0(sp)
+    # funct
+    li a0 0
+    slli a0 a0 5 # shift for rs2
+    # rs1
+    li s4 0b11111
+    slli s4 s4 7
+    and s4 s4 a5
+    srli s4 s4 7
+    add a0 a0 s4
+    slli a0 a0 3 # shift for funct
+    # funct
+    # 000
+    slli a0 a0 5 # shift for rd
+    # rd
+    slli a0 a0 7 # shift for opcode
+    # opcode
+    addi a0 a0 0b0110111
+    lw ra 0(sp)
+    addi sp sp 4
+    jr ra 
+
+# parameter a5, return in a0
+de_jr:
+    addi sp sp -4
+    sw ra 0(sp)
+    # funct
+    li a0 0
+    slli a0 a0 5 # shift for rs2
+    # rs1
+    li s4 0b11111
+    slli s4 s4 7
+    and s4 s4 a5
+    srli s4 s4 7
+    add a0 a0 s4
+    slli a0 a0 3 # shift for funct
+    # funct
+    # 000
+    slli a0 a0 5 # shift for rd
+    # rd
+    addi a0 a0 1
+    slli a0 a0 7 # shift for opcode
+    # opcode
+    addi a0 a0 0b0110111
+    lw ra 0(sp)
+    addi sp sp 4
+    jr ra 
+
+# parameter a5, return in a0
+de_li:
+    addi sp sp -4
+    sw ra 0(sp)
+    li a0 0
+    # imm[11:5]
+    li s4 1
+    slli s4 s4 12
+    and s4 s4 a5
+    srli s4 s4 12
+    beq s4 x0 de_li_zero
+        # imm[5] is one
+        addi a0 a0 0b1111111
+    de_li_zero:
+    slli a0 a0 5 # shift for imm[4:0]
+    #imm[4:0]
+    li s4 0b11111
+    slli s4 s4 2
+    and s4 s4 a5
+    srli s4 s4 2
+    add a0 a0 s4
+    slli a0 a0 5 # shift for rs1
+    # rs1=x0
+    slli a0 a0 3 # shift for funct
+    # funct=0
+    slli a0 a0 5 # shift for rd
+    # rd
+    li s4 0b11111
+    slli s4 s4 7
+    and s4 s4 a5
+    srli s4 s4 7
+    add a0 a0 s4
+    slli a0 a0 7 # shift for opcode
+    # opcode
+    addi a0 a0 0b0010011
+    lw ra 0(sp)
+    addi sp sp 4
+    jr ra 
+
+# parameter a5, return in a0
+de_lui:
+    addi sp sp -4
+    sw ra 0(sp)
+    li a0 0
+    # imm[31:17]
+    li s4 1
+    slli s4 s4 12
+    and s4 s4 a5
+    srli s4 s4 12
+    beq s4 x0 de_lui_zero
+        # imm[17] is one
+        addi a0 a0 0b1111111
+        slli a0 a0 8
+        addi a0 a0 0b11111111
+    de_lui_zero:
+    slli a0 a0 5 # shift for imm[16:12]
+    # imm[16:12]
+    li s4 0b11111
+    slli s4 s4 2
+    and s4 s4 a5
+    srli s4 s4 2
+    add a0 a0 s4
+    slli a0 a0 5 # shift for rd
+    # rd
+    li s4 0b11111
+    slli s4 s4 7
+    and s4 s4 a5
+    srli s4 s4 7
+    add a0 a0 s4
+    slli a0 a0 7 # shift for opcode
+    # opcode
+    addi a0 a0 0b0110111
+    lw ra 0(sp)
+    addi sp sp 4
+    jr ra 
+
+# parameter a5, return in a0
+de_addi:
+    addi sp sp -4
+    sw ra 0(sp)
+    li a0 0
+    # imm[11:5]
+    li s4 1
+    slli s4 s4 12
+    and s4 s4 a5
+    srli s4 s4 12
+    beq s4 x0 de_addi_zero
+        # imm[5] is one
+        addi a0 a0 0b1111111
+    de_addi_zero:
+    slli a0 a0 5 # shift for imm[4:0]
+    # imm[4:0]
+    li s4 0b11111
+    slli s4 s4 2
+    and s4 s4 a5
+    srli s4 s4 2
+    add a0 a0 s4
+    slli a0 a0 5 # shift for rs1
+    # rs1=rd
+    li s4 0b11111
+    slli s4 s4 7
+    and s4 s4 a5
+    srli s4 s4 7
+    add a0 a0 s4
+    slli a0 a0 3 # shift for funct
+    # funct=0
+    slli a0 a0 5 # shift for rd
+    # rd
+    add a0 a0 s4
+    slli a0 a0 7 # shift for opcode
+    # opcode
+    addi a0 a0 0b0010011
+    lw ra 0(sp)
+    addi sp sp 4
+    jr ra 
+
+# parameter a5, return in a0
+de_slli:
+    addi sp sp -4
+    sw ra 0(sp)
+    li a0 0
+    # shamt[4:0]
+    li s4 0b11111
+    slli s4 s4 2
+    and s4 s4 a5
+    srli s4 s4 2
+    add a0 a0 s4
+    slli a0 a0 5 # shift for rs1
+    # rs1=rd
+    li s4 0b11111
+    slli s4 s4 7
+    and s4 s4 a5
+    srli s4 s4 7
+    add a0 a0 s4
+    slli a0 a0 3 # shift for funct
+    # funct=0
+    addi a0 a0 1
+    slli a0 a0 5 # shift for rd
+    # rd
+    add a0 a0 s4
+    slli a0 a0 7 # shift for opcode
+    # opcode
+    addi a0 a0 0b0010011
+    lw ra 0(sp)
+    addi sp sp 4
+    jr ra 
+
+# parameter a5, return in a0
+de_lw:
+    addi sp sp -4
+    sw ra 0(sp)
+    li a0 0
+    # imm[11:7]=0
+    # imm[6]
+    li s4 1
+    slli s4 s4 5
+    and s4 s4 a5
+    srli s4 s4 5
+    add a0 a0 s4
+    slli a0 a0 3 # shift for imm[5:3]
+    # imm[5:3]
+    li s4 0b111
+    slli s4 s4 10
+    and s4 s4 a5
+    srli s4 s4 10
+    add a0 a0 s4
+    slli a0 a0 1 # shift for imm[2]
+    # imm[2]
+    li s4 1
+    slli s4 s4 6
+    and s4 s4 a5
+    srli s4 s4 6
+    add a0 a0 s4
+    slli a0 a0 2 # shift for imm[1:0]
+    # imm[1:0]=0
+    slli a0 a0 5 # shift for rs1
+    addi a0 a0 0b01000
+    li s4 0b111
+    slli s4 s4 7
+    and s4 s4 a5
+    srli s4 s4 7
+    add a0 a0 s4
+    slli a0 a0 3 # shift for funct
+    # funct
+    addi a0 a0 0b010
+    slli a0 a0 5 # shift for rd
+    # rd
+    addi a0 a0 0b01000
+    li s4 0b111
+    slli s4 s4 2
+    and s4 s4 a5
+    srli s4 s4 2
+    add a0 a0 s4
+    slli a0 a0 7 # shift for opcode
+    # opcode
+    addi a0 a0 0b0000011
+    lw ra 0(sp)
+    addi sp sp 4
+    jr ra 
+
+# parameter a5, return in a0
+de_sw:
+    addi sp sp -4
+    sw ra 0(sp)
+    li a0 0
+    # imm[11:7]=0
+    # imm[6]
+    li s4 1
+    slli s4 s4 5
+    and s4 s4 a5
+    srli s4 s4 5
+    add a0 a0 s4
+    slli a0 a0 1 # shift for imm[5]
+    # imm[5]
+    li s4 1
+    slli s4 s4 12
+    and s4 s4 a5
+    srli s4 s4 12
+    add a0 a0 s4
+    slli a0 a0 5 # shift for rs2
+    # rs2
+    addi a0 a0 0b01000
+    li s4 0b111
+    slli s4 s4 2
+    and s4 s4 a5
+    srli s4 s4 2
+    add a0 a0 s4
+    slli a0 a0 5 # shift for rs1
+    addi a0 a0 0b01000
+    li s4 0b111
+    slli s4 s4 7
+    and s4 s4 a5
+    srli s4 s4 7
+    add a0 a0 s4
+    slli a0 a0 3 # shift for funct
+    # funct
+    addi a0 a0 0b010
+    slli a0 a0 2 # shift for imm[4:3]
+    # imm[4:3]
+    li s4 0b11
+    slli s4 s4 10
+    and s4 s4 a5
+    srli s4 s4 10
+    add a0 a0 s4
+    slli a0 a0 1 # shift for imm[2]
+    # imm[2]
+    li s4 1
+    slli s4 s4 6
+    and s4 s4 a5
+    srli s4 s4 6
+    add a0 a0 s4
+    slli a0 a0 2 # shift for imm[1:0]
+    # imm[1:0]=0
+    slli a0 a0 7 # shift for opcode
+    # opcode
+    addi a0 a0 0b0000011
+    lw ra 0(sp)
+    addi sp sp 4
+    jr ra 
+
+
+# parameter a5, return in a0
+de_beqz:
+    addi sp sp -4
+    sw ra 0(sp)
+    li s5 0
+    li s2 1
+    lw ra 0(sp)
+    addi sp sp 4
+    jr ra 
+
+# parameter a5, return in a0
+de_and:
+    addi sp sp -4
+    sw ra 0(sp)
+    # funct
+    li a0 0
+    slli a0 a0 5 #shift for rs2
+    # rs2
+    li s4 0b11111
+    slli s4 s4 2
+    and s4 s4 a5
+    srli s4 s4 2 # shift back
+    add a0 a0 s4
+    slli a0 a0 5 # shift for rs1
+    # rs1
+    li s4 0b11111
+    slli s4 s4 7
+    and s4 s4 a5
+    srli s4 s4 7
+    add a0 a0 s4
+    slli a0 a0 3 # shift for funct
+    addi a0 a0 0b111
+    slli a0 a0 5
+    add a0 a0 s4
+    slli a0 a0 7
+    addi a0 a0 0b0110011
+    lw ra 0(sp)
+    addi sp sp 4
+    jr ra
+
+# parameter a5, return in a0
+de_or:
+    addi sp sp -4
+    sw ra 0(sp)
+    # funct
+    li a0 0
+    slli a0 a0 5 #shift for rs2
+    # rs2
+    li s4 0b11111
+    slli s4 s4 2
+    and s4 s4 a5
+    srli s4 s4 2 # shift back
+    add a0 a0 s4
+    slli a0 a0 5 # shift for rs1
+    # rs1
+    li s4 0b11111
+    slli s4 s4 7
+    and s4 s4 a5
+    srli s4 s4 7
+    add a0 a0 s4
+    slli a0 a0 3 # shift for funct
+    addi a0 a0 0b110
+    slli a0 a0 5
+    add a0 a0 s4
+    slli a0 a0 7
+    addi a0 a0 0b0110011
+    lw ra 0(sp)
+    addi sp sp 4
+    jr ra
+
+# parameter a5, return in a0
+de_xor:
+    addi sp sp -4
+    sw ra 0(sp)
+    # funct
+    li a0 0
+    slli a0 a0 5 #shift for rs2
+    # rs2
+    li s4 0b11111
+    slli s4 s4 2
+    and s4 s4 a5
+    srli s4 s4 2 # shift back
+    add a0 a0 s4
+    slli a0 a0 5 # shift for rs1
+    # rs1
+    li s4 0b11111
+    slli s4 s4 7
+    and s4 s4 a5
+    srli s4 s4 7
+    add a0 a0 s4
+    slli a0 a0 3 # shift for funct
+    addi a0 a0 0b100
+    slli a0 a0 5
+    add a0 a0 s4
+    slli a0 a0 7
+    addi a0 a0 0b0110011
+    lw ra 0(sp)
+    addi sp sp 4
+    jr ra
+
+# parameter a5, return in a0
+de_sub:
+    addi sp sp -4
+    sw ra 0(sp)
+    # funct
+    li a0 0
+    addi a0 a0 0b0100000
+    slli a0 a0 5 #shift for rs2
+    # rs2
+    li s4 0b11111
+    slli s4 s4 2
+    and s4 s4 a5
+    srli s4 s4 2 # shift back
+    add a0 a0 s4
+    slli a0 a0 5 # shift for rs1
+    # rs1
+    li s4 0b11111
+    slli s4 s4 7
+    and s4 s4 a5
+    srli s4 s4 7
+    add a0 a0 s4
+    slli a0 a0 3 # shift for funct
+    addi a0 a0 0b110
+    slli a0 a0 5
+    add a0 a0 s4
+    slli a0 a0 7
+    addi a0 a0 0b0110011
+    lw ra 0(sp)
+    addi sp sp 4
+    jr ra
+
+# parameter a5, return in a0
+de_srli:
+    addi sp sp -4
+    sw ra 0(sp)
+    li a0 0
+    # shamt[4:0]
+    li s4 0b11111
+    slli s4 s4 2
+    and s4 s4 a5
+    srli s4 s4 2
+    add a0 a0 s4
+    slli a0 a0 5 # shift for rs1
+    # rs1=rd
+    li s4 0b11111
+    slli s4 s4 7
+    and s4 s4 a5
+    srli s4 s4 7
+    add a0 a0 s4
+    slli a0 a0 3 # shift for funct
+    # funct=0
+    addi a0 a0 0b101
+    slli a0 a0 5 # shift for rd
+    # rd
+    add a0 a0 s4
+    slli a0 a0 7 # shift for opcode
+    # opcode
+    addi a0 a0 0b0010011
+    lw ra 0(sp)
+    addi sp sp 4
+    jr ra 
+
+# parameter a5, return in a0
+de_srai:
+    addi sp sp -4
+    sw ra 0(sp)
+    li a0 0
+    addi a0 a0 0b0100000
+    slli a0 a0 5 # shift for shamt
+    # shamt[4:0]
+    li s4 0b11111
+    slli s4 s4 2
+    and s4 s4 a5
+    srli s4 s4 2
+    add a0 a0 s4
+    slli a0 a0 5 # shift for rs1
+    # rs1=rd
+    li s4 0b11111
+    slli s4 s4 7
+    and s4 s4 a5
+    srli s4 s4 7
+    add a0 a0 s4
+    slli a0 a0 3 # shift for funct
+    # funct=0
+    addi a0 a0 0b101
+    slli a0 a0 5 # shift for rd
+    # rd
+    add a0 a0 s4
+    slli a0 a0 7 # shift for opcode
+    # opcode
+    addi a0 a0 0b0010011
+    lw ra 0(sp)
+    addi sp sp 4
+    jr ra 
+
+

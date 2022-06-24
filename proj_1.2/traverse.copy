@@ -1,0 +1,36 @@
+traverse:
+    # t1 keeps the address of instrustion under process
+    mv t1 a3
+    li s10 0 # the address of the last instruction
+    find_tail: # find the tail of all instruction
+        li s9 0
+        lh t4 0(t1)
+        or s9 s9 t4
+        lh t4 2(t1)
+        or s9 s9 t4
+        beq s9 x0 exit_find_tail
+        mv s10 t1
+        addi t1 t1 2
+        jal x0 find_tail
+    exit_find_tail:
+    # t1 keeps the address of instrustion under process
+    mv t1 s10
+    # a2 is the number of iterations
+    mv t0 a2 # t0 is the iterater, i=1
+    traverse_loop:
+        beq t0 x0 exit_traverse_loop
+        lb t4 0(t1) # t4 next half
+        # \if the last two bit of t4 is 11, then it is 32bit instr
+        andi t5 t4 3
+        li t6 3
+        bne t5 t6 instr_16
+            # process 32bit instr now
+            sub t6 a4 t0 # comp+i
+            sb x0 0(t6) # comp[i]=0 if this instr is 32bit
+            addi t1 t1 -2
+        instr_16:
+        addi t1 t1 -2
+        addi t0 t0 -1
+        jal x0 traverse_loop
+    exit_traverse_loop:
+    jr ra
